@@ -1,0 +1,192 @@
+;*****************************************************************
+;* This stationery serves as the framework for a                 *
+;* user application (single file, absolute assembly application) *
+;* For a more comprehensive program that                         *
+;* demonstrates the more advanced functionality of this          *
+;* processor, please see the demonstration applications          *
+;* located in the examples subdirectory of the                   *
+;* Freescale CodeWarrior for the HC12 Program directory          *
+;*****************************************************************
+
+; export symbols
+            XDEF Entry, _Startup            ; export 'Entry' symbol
+            ABSENTRY Entry        ; for absolute assembly: mark this as application entry point
+
+
+
+; Include derivative-specific definitions 
+		INCLUDE 'derivative.inc' 
+
+ROMStart    EQU  $4000  ; absolute address to place my code/constant data
+
+; variable/data section
+
+            ORG $3000
+ ; Insert here your data definition. 
+LH   rmb 1;
+RH   rmb 1;
+DAT EQU PTS
+CONTROL EQU PORTE
+ENABLE EQU $20
+RS EQU $30
+mem1 rmb 1; 
+mem2 rmb 1; 
+mem3 rmb 1
+mem4 rmb 1
+mem5 rmb 1
+
+msg1  dc.b "hello there",0 
+      
+
+     
+
+; code section
+            ORG   ROMStart
+
+
+Entry:
+_Startup:
+MainLoop JSR clrLCD
+ 
+          LDX msg1
+          JSR putsLCD
+          
+          LDAA $3000
+          JSR lefthalf ;
+          STAA  mem1
+          
+          LDAA righthalf 
+          JSR putsLCD 
+          STAA mem2
+          
+          LDAA $3001 
+          JSR righthalf
+          STAA mem3
+          
+          LDAA $3001
+          JSR lefthalf
+          STAA mem4
+          
+          LDAA 0
+          STAA mem5
+          
+          LDX #mem1
+          JSR putsLCD
+          
+          LDY #20000   ;delay 1 s
+          JSR DELAY;
+          BRA MainLoop
+          
+      
+ 
+;**************************************************************
+;*                 ASCII SUBROUTINE                           *
+;************************************************************** 
+lefthalf LSRA
+         LSRA
+         LSRA
+         LSRA
+          
+          
+righthalf ANDA #$0F
+          ADDA #$30
+          CMPA #$39
+          BLE out;
+          ADDA #$07
+out 
+ 
+;**************************************************************
+;*                 INIT LCD SUBROUTINE                        *
+;************************************************************** 
+initLCD:    BSET DDRS,%11110000
+            BSET DDRE,%10010000
+   
+            LDY #2000
+            JSR DELAY
+            
+            LDAA #$28 ;SET 4 BIT, 2 LINE DISPLAY
+            JSR cmd2lcd
+            
+            LDAA #$0C ;DISPLAY ON, CURSOR OFF, BLINKING OFF
+            JSR cmd2lcd
+            
+            LDAA #$06
+            JSR cmd2lcd
+            
+            RTS
+   
+   
+   
+;**************************************************************
+;*                 CLEAR SUBROUTINE                           *
+;**************************************************************                      
+clrLCD      LDAA #$01
+            JSR cmd2lcd
+            LDY #40
+            JSR DELAY 
+            RTS            
+      
+                        
+                      
+;**************************************************************
+;*                 DELAY SUBROUTINE                           *
+;**************************************************************            
+
+;ASSUME 42 NANOSECOND ECLOCK   ABOUT 50 uS *Y
+DELAY:       LDX #298
+loop1:       NOP               ;1 ECLK
+             DBNE X, loop1     ;3 ECLK
+             DBNE Y,DELAY
+             RTS          
+;**************************************************************
+;*                 ACCU A  2 LCD SUBROUTINE                   *
+;**************************************************************             
+
+cmd2lcd:     BCLR CONTROL,RS       ;SELECT LCD INSTRUCTION REG
+             JSR datamov           ;SEND DATA TO REG(IR)
+             RTS
+
+;**************************************************************
+;*                 DATAMOV SUBROUTINE                         *
+;************************************************************** 
+
+datamov:     BSET CONTROL,ENABLE    ;PULL E SIGNAL HIGH
+             STAA DAT               ;send the upper 4 bits of data to lcd 
+             BCLR CONTROL,ENABLE    ;PULL E SIGNAL LOW TO COMPLETE W OPER
+             
+             LSLA
+             LSLA
+             LSLA
+             LSLA
+             
+             BSET CONTROL,ENABLE
+             STAA DAT
+             BCLR CONTROL,ENABLE
+             
+             JSR DELAY
+             RTS
+             
+;**************************************************************
+;*                 PUTC SUBROUTINE                           *
+;**************************************************************              
+
+putcLCD:     BSET CONTROL,RS
+             JSR datamov
+             RTS
+
+;**************************************************************
+;*                 PUTS SUBROUTINE                           *
+;************************************************************** 
+putsLCD     LDAA 1,X+
+            BEQ   DONE
+            JSR   putcLCD;
+            BRA   putsLCD
+DONE        RTS            
+            
+
+
+;**************************************************************
+;*                 Interrupt Vectors                          *
+;**************************************************************
+            ORG   $FFFE
+            DC.W  Entry           ; Reset Vector
