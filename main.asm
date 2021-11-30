@@ -1,0 +1,516 @@
+; export symbols
+            XDEF Entry, _Startup            ; export 'Entry' symbol
+            ABSENTRY Entry        ; for absolute assembly: mark this as application entry point
+
+; Include derivative-specific definitions 
+		INCLUDE 'derivative.inc' 
+
+ROMStart    EQU  $4000  ; absolute address to place my code/constant data
+
+; variable/data section
+            ORG $3850  ; LOCATION OF TOF COUNTER REGISTER
+TOF_COUNTER DC.B 0   ; TIMER (INCREMENTS AT 23 MHz)
+CURRENT_STATE  DC.B 3    ;CURRENT STATE 
+T_FWD       DS.B 1    ; FWD TIME 
+T_REV       DS.B 1   ; REV TIME 
+T_FWD_TRN   DS.B 1   ; FWD TURN TIME 
+T_REV_TRN   DS.B 1   ; REV TURN TIME 
+
+TEN_THOUS   DS.B 1 
+THOUSANDS   DS.B 1
+HUNDREDS    DS.B 1
+TENS        DS.B 1
+UNITS       DS.B 1
+NO_BLANKS   DS.B 2 ; USED IN "LEADING ZERO " BLANKING BY BCD2ASC
+
+LH   rmb 1;
+RH   rmb 1;
+DAT EQU PTS
+CONTROL EQU PORTE
+ENABLE EQU $20
+RS EQU $30
+mem1 rmb 1; 
+mem2 rmb 1; 
+mem3 rmb 1
+mem4 rmb 1
+mem5 rmb 1   
+
+
+            ORG RAMStart
+ ; Insert here your data definition.
+            LCD_DAT  -------------
+            LCD_CNTR -------------
+            LCD_E ---------
+            LCD_RS ----------
+            FWD_INT EQU 69 ; 3 SECOND DELAY @ 23 HZ
+            REV_INT EQU 69 ;" 
+            FWD_TRN_INT 46 ; 2 SECOND DELAY
+            REV_TRN_INT    ; "
+            
+            START   EQU 0 
+            FWD     EQU 1 
+            REV     EQU 2 
+            ALL_STP EQU 3 
+            FWD_TRN EQU 4 
+            REV_TRN EQU 5
+            
+           
+
+
+; code section
+            ORG   ROMStart
+
+
+Entry:
+_Startup:
+            CLI ; ENABLE INTERUPTS 
+            LDS   #RAMEnd+1       ; initialize the stack pointer
+
+            BSET DDRA,%00000011   ; DIRECTION STAR & PORT 
+            BSET DDRT,%00110000   ; SPEED 
+            
+            JSR initAD ;INITIALIZE ATD CONVERTER 
+            
+            JSR initLCD ; INITIALIZE, CLEAR AND
+            JSR clrLCD  ; HOME CURSOR 
+            
+            LDX #msg1
+            JSR putsLCD ; display message 1 
+            
+            LDAA #$C0   ; MOVE CURSOR
+            JSR cmd2LCD ; to second row 
+            
+            LDX #msg2
+            JSR putsLCD ; DISPLAY SECOND MESSAGE
+            
+            JSR ENABLE_TOF ; JUMP TO TOF INIT
+            
+MAIN        JSR  UPDT_DISPL
+            LDAA CRNT_STATE
+            JSR  DISPATCHER 
+            BRA  MAIN                     
+            
+ ; DATA SECTION 
+ 
+msg1         DC.B "battery volt",0
+msg2         DC.B "state", 0 
+tab          DC.B "START", 0 
+             DC.B "FWD",0 
+             DC.B "REV",0 
+             DC.B "ALL_STP",0
+             DC.B "FWD_TRN",0
+             DC.B "REV_TRN",0
+             
+             
+; SUBROUTINE SECTION 
+
+DISPATCHER   CMPA #START    ; IF START STATE CALL START ROUTINE
+             BNE NOT_START
+             JSR START_ST   
+             BRA DISP_EXIT ; EXIT (RTS)
+             
+NOT_START    CMPA #FORWARD  ;ELSE IF FORWARD
+             BNE NOT_FORWARD
+             JSR FORWARD_ST
+             JMP DISP_EXIT
+             
+NOT_FORWARD  CMPA #REVERSE  ;ELSE IF REVERSE 
+             BNE NOT_REVERSE
+             JSR REV_ST
+             JMP DISP_EXIT
+             
+NOT_REVERSE  CMPA #ALL_STOP ;ELSE IF ALL_STOP
+             BNE NOT_ALL_STOP
+             JSR ALL_STOP_ST
+             JMP DISP_EXIT 
+             
+NOT_ALL_STOP CMPA #FWD_TRN ; ELSE OF FWD TURN
+             BNE NOT_FWD_TRN 
+             JSR FWD_TRN_ST
+             JMP DISP_EXIT
+        
+NOT_FWD_TRN  CMPA #REV_TRN   ; ELSE IF REV_TRN STATE
+             BNE NOT_REV_TRN
+             JSR REV_TRN_ST 
+             BRA DISP_EXIT 
+             
+NOT_REV_TRN SWI
+DISP_EXIT  RTS
+
+;STATES SECTION 
+************************************************
+* ;PASSED CURRENT STATE IN ACCA 
+* ;RETURNS NEW STATE IN ACCA 
+
+;START STATE HANDLER 
+START_ST  BRCLR PORTAD0,$04,NO_FORWARD ; IF FWD BUMP
+          JSR INIT_FWD        ; INIT FWD STATE 
+          MOVB #FORWARD,CURRENT_STATE
+          BRA RTS
+          
+NO_FORWARD NOP ; ELSE            
+                             
+                         
+
+          
+;------------------------------------------------
+;FORWARD STATE HANDLER 
+FORWARD_ST BRSET PORTAD0,$04,NO_FWD_BUMP ;IF 
+           JSR INIT_REVERSE 
+           MOVB #REVERSE,CURRENT_STATE
+           RTS
+           
+NO_FWD_BUMP BRSET PORTAD0,$08,NO_REAR_BUMP   ;IF A REAR BUMP 
+            JSR INIT_ALL_STOP                ;THEN WE STOP,
+            MOVB #ALL_STOP,CURRENT_STATE     ;SO INIT ALLSTOP 
+            JSR 
+            
+NO_REAR_BUMP LDAA TOFCOUNTER  ; IF T IS > TFWD 
+             CMP T_FORWARD    ; THEN TURN, INIT TRN
+             BNE NO_FWD_TURN  ; 
+             JSR INIT_FWD_TURN
+             MOVB #FOWARD_TURN,CURRENT_STATE
+             RTS
+             
+NO_FWD_TURN NOP ;ELSE STATEMENT
+             
+;------------------------------------------------
+;REVERSE STATE HANDLER 
+
+REV_ST LDAA TOF_COUNTER 
+       CMPA T_REV
+       BNE NO_REV_TRN
+       JSR INIT_REV_TRN
+       MOVB #REV_TRN,CURRENT_STATE
+       RTS
+       
+NO_REV_TRN NOP ; ELSE STATEMENT
+
+;--------------------------------------------------
+;ALL STOP STATE HANDLER 
+ALL_STOP_ST BRSET PORTAD0,$04,NO_START
+            BCLR PTT, %00110000
+            MOVB #START,CURRENT_STATE
+            RTS
+            
+NO_START NOP; ELSE STATEMENT 
+
+;---------------------------------------------------
+;REVERSE TURN STATE HANDLER 
+
+REV_TRN_ST LDAA TOF_COUNTER 
+           CMPA T_REV_TRN
+           BNE NO_FWD_RT
+           JSR INIT_FWD
+           MOVB #FWD,CURRENT_STATE
+           RTS
+           
+NO_FWD_RT NOP
+
+;***********************************************
+;*                HARDWARE INITIALIZATION      *
+;***********************************************                       
+ ;-----------------------------------------------
+INIT_FWD  JSR BOTH_MOTORS_ON  ;TURN ON THE MOTORS           
+          LDAA TOFCOUNTER ; MARK CURRENT TIME
+          ADDA #FWD_INT   ; DESIRED TIME INTERVAL
+          STAA T_FWD
+          RTS      
+             
+;------------------------------------------------
+INIT_REV BSET PORTA,%00000011
+         BSET PTT,%00110000
+         LDAA TOF_COUNTER
+         ADDA #REV_INT
+         STAA T_REV
+         RTS
+         
+;--------------------------------------------------
+INIT_ALL_STOP  BCLR PTT,%00110000
+               RTS
+               
+                        
+;-------------------------------------------------
+INIT_FWD_TURN BSET PORTA,%00000010
+              LDAA TOF_COUNTER
+              ADDA #FWD_TRN_INT
+              STAA T_FWD_TRN
+              RTS
+              
+;-------------------------------------------------
+INIT_REV_TURN BCLR PORTA,%00000010
+              LDAA TOF_COUNTER
+              ADDA #REV_TRN_INT
+              STAA T_REV_TRN
+              RTS
+              
+;************************************************************
+;*           LCD & ASCII CONVERSION ROUTINES                *
+;************************************************************
+
+ 
+;**************************************************************
+;*                 ASCII SUBROUTINE                           *
+;************************************************************** 
+lefthalf LSRA
+         LSRA
+         LSRA
+         LSRA
+          
+          
+righthalf ANDA #$0F
+          ADDA #$30
+          CMPA #$39
+          BLE out;
+          ADDA #$07
+out 
+ 
+;**************************************************************
+;*                 INIT LCD SUBROUTINE                        *
+;************************************************************** 
+initLCD:    BSET DDRS,%11110000
+            BSET DDRE,%10010000
+   
+            LDY #2000
+            JSR DELAY
+            
+            LDAA #$28 ;SET 4 BIT, 2 LINE DISPLAY
+            JSR cmd2lcd
+            
+            LDAA #$0C ;DISPLAY ON, CURSOR OFF, BLINKING OFF
+            JSR cmd2lcd
+            
+            LDAA #$06
+            JSR cmd2lcd
+            
+            RTS
+   
+   
+   
+;**************************************************************
+;*                 CLEAR SUBROUTINE                           *
+;**************************************************************                      
+clrLCD      LDAA #$01
+            JSR cmd2lcd
+            LDY #40
+            JSR DELAY 
+            RTS            
+      
+                        
+                      
+;**************************************************************
+;*                 DELAY SUBROUTINE                           *
+;**************************************************************            
+
+;ASSUME 42 NANOSECOND ECLOCK   ABOUT 50 uS *Y
+DELAY:       LDX #298
+loop1:       NOP      ;1 ECLK
+             DBNE X, loop1;3 ECLK
+             DBNE Y,DELAY
+             RTS          
+;**************************************************************
+;*                 ACCU A  2 LCD SUBROUTINE                   *
+;**************************************************************             
+
+cmd2lcd:     BCLR CONTROL,RS       ;SELECT LCD INSTRUCTION REG
+             JSR datamov           ;SEND DATA TO REG(IR)
+             RTS
+
+;**************************************************************
+;*                 DATAMOV SUBROUTINE                         *
+;************************************************************** 
+
+datamov:     BSET CONTROL,ENABLE ;PULL E SIGNAL HIGH
+             STAA DAT ;send the upper 4 bits of data to lcd 
+             BCLR CONTROL,ENABLE  ; PULL E SIGNAL LOW TO COMPLETE W OPER
+             
+             LSLA
+             LSLA
+             LSLA
+             LSLA
+             
+             BSET CONTROL,ENABLE
+             STAA DAT
+             BCLR CONTROL,ENABLE
+             
+             JSR DELAY
+             RTS
+             
+;**************************************************************
+;*                 PUTC SUBROUTINE                           *
+;**************************************************************              
+
+putcLCD:     BSET CONTROL,RS
+             JSR datamov
+             RTS
+
+;**************************************************************
+;*                 PUTS SUBROUTINE                           *
+;************************************************************** 
+putsLCD     LDAA 1,X+
+            BEQ   DONE
+            JSR   putcLCD;
+            BRA   putsLCD
+DONE        RTS            
+            
+;**************************************************************
+;*            BCD ASCII ROUTINES                              *
+;**************************************************************
+int2BCD    XGDX 
+           LDAA #0
+           STAA TEN_THOUS
+           STAA THOUSANDS 
+           STAA HUNDREDS 
+           STAA TENS 
+           STAA UNITS 
+           STAA NO_BLANKS
+           STAA NO_BLANKS+1
+           
+           CPX #0 
+           BEQ RTS
+           
+           XGDX 
+           LDX #10 
+           IDIV
+           STAB UNITS 
+           CPX #0 
+           BEQ RTS 
+           
+           XGDX 
+           LDX #10 
+           IDIV
+           STAB TENS
+           CPX #0 
+           BEQ RTS 
+           
+           XGDX 
+           LDX #10 
+           IDIV
+           STAB HUNDREDS 
+           CPX #0 
+           BEQ RTS 
+           
+           XGDX 
+           LDX #10 
+           IDIV 
+           STAB THOUSANDS 
+           CPX #0 
+           BEQ RTS 
+           
+           XGDX
+           LDX #10 
+           IDIV 
+           STAB TEN_THOUS
+           RTS
+       
+;---------------------------------------------------------------
+BCD2ASC LDAA #0 
+        STAA NO_BLANK
+        
+C_TTHOU LDAA TEN_THOUS 
+        ORAA NO_BLANK
+        BNE NOT_BLANK1
+        
+ISBLANK1 LDAA #' '
+         STAA TEN_THOUS
+         BRA C_THOU 
+         
+NOT_BLANK1 LDAA TEN_THOUS
+           ORAA #$30 
+           STAA TEN_THOUS
+           LDAA #$1
+           STAA NO_BLANK
+           
+           
+C_THOU  LDAA THOUSANDS 
+        ORAA NO_BLANK
+        BNE NOT_BLANK2
+        
+ISBLANK2 LDAA #' '
+         STAA THOUSANDS 
+         BRA C_HUNS
+         
+NOT_BLANK2 LDAA THOUSANDS 
+           ORAA #$30 
+           STAA THOUSANDS 
+           LDAA #$1
+           STAA NO_BLANK
+           
+C_HUNS LDAA HUNDREDS 
+       ORAA NO_BLANK
+       BNE NOT_BLANK3
+       
+ISBLANK3 LDAA #' '
+         STAA HUNDREDS 
+         BRA C_TENS 
+         
+NOT_BLANK3 LDAA HUNDREDS 
+           ORAA #$30 
+           STAA HUNDREDS 
+           LDAA#$1
+           STAA NO_BLANK 
+           
+C_TENS LDAA TENS 
+       ORAA NO_BLANK
+       BNE NOT_BLANK4 
+       
+ISBLANK4 LDAA #' '
+         STAA TENS 
+         BRA C_UNITS 
+         
+NOT_BLANK4 LDAA TENS 
+           ORAA #$30 
+           STAA TEBS 
+           
+C_UNITS LDAA UNITS 
+        ORAA #$30 
+        STAA UNITS 
+        
+        RTS                                                                                                              
+                                         
+;*****************************************************
+;*             timer routines                        *
+;*****************************************************
+            
+ENABLE_TOF LDD #TOF_ISR
+           STD $FFDE
+           
+           LDAA #%10000000
+           STAA TSCR1
+           
+TOF_ISR    INC TOF_COUNTER
+           LDAA #%10000000
+           STAA TFLG2
+           RTI                       
+                         
+                         
+;*******************************************************
+;*            UPDATE DISPLAY                           *
+;******************************************************* 
+
+UPDT_DISPL MOVB #$90,ATDDCTL5
+           BRCLR ATDSTAT0,$90,*
+           
+                  
+           
+           LDAA #$C6
+           JSR cmd2LCD
+           
+           LDAB CURRENT_STATE
+           LSLB                         
+           LSLB
+           LSLB
+           LDX #tab
+           ABX
+           JSR putsLCD
+           
+           rts
+           
+                                    
+;**************************************************************
+;*                 Interrupt Vectors                          *
+;**************************************************************
+            ORG   $FFFE
+            DC.W  Entry           ; Reset Vector
+            ORG   $FFDE
+            DC.W TOF_ISR 
