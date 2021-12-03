@@ -31,3 +31,44 @@ FOLLOW STATE
 BUMP STATE 
 
 
+
+SENSOR
+
+MAIN:   
+    MOV P1, #00H        ; motor
+    MOV P2, #00H        ; buttons P2.0-2.2, sensors P2.3-2.5
+
+FLOOR1: 
+    JNB P2.0, FLOOR2        ; check button
+    SETB    P1.1            ; start motor to go down
+    JNB P2.3, $         ; check sensor, cont until it reaches 1st floor
+    CLR P1.1            ; stops motor
+    SJMP    MAIN
+
+FLOOR2:
+    JNB P2.1, FLOOR3
+    JNB P2.3, FLOOR2DOWN    ; check if lift is on floor 1
+    SETB    P1.0            ; starts motor upwards
+    JNB P2.4, $
+    CLR P1.0    
+    SJMP    MAIN
+
+FLOOR2DOWN:
+    JNB P2.1, FLOOR3
+    JNB P2.5, FLOOR2        ; check if lift is on floor 3
+    SETB    P1.1
+    JNB P2.4, $
+    CLR     P1.1
+    SJMP    MAIN
+
+FLOOR3:
+    JNB P2.2, MAIN      ; check button floor 3
+    SETB    P1.0            
+    JNB P2.5, $         ; cont until it reaches floor 3
+    CLR P1.0
+
+    SJMP    MAIN
+
+END
+
+
