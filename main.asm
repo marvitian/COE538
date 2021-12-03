@@ -1,8 +1,8 @@
 ;**************************************************************
-;       FINAL PROJECT COE538: EEBOT - SECTION 4
-;       MANAV PATEL - 500967756
-;       MARIO IANNIELLO - 
-;       KAPILAN BALAKRISHNAN - 
+;       FINAL PROJECT COE538 - SECTION 4                      *
+;       MANAV PATEL - 500967756                               *
+;       MARIO IANNIELLO - 500894623                           *  
+;       KAPILAN BALAKRISHNAN - 500959576                      *
 ;**************************************************************
 
 ; export symbols
@@ -14,7 +14,7 @@
 ; Include derivative-specific definitions 
 		INCLUDE 'derivative.inc' 
 
-ROMStart    EQU  $4000  
+        ROMStart    EQU  $4000  
 
 ; variable/data section
 
@@ -22,13 +22,13 @@ ROMStart    EQU  $4000
  ; Insert here your data definition.
             START EQU 0
             FORWARD EQU 1
-            REVERSE EQU 2
-            ALLSTOP EQU 3
+            BUMP EQU 2
+            BACKTRACK EQU 3
             IS_INTERSECT EQU 4
 
 
-            PRIMARY_PATH EQU 0
-            ALTERNATE_PATH EQU 1
+            PRIMARY_PATH EQU 1
+            ALTERNATE_PATH EQU 0
             PATHINGMODE DS.B 1
             DIRECTION DC.B 1
 ; code section
@@ -40,11 +40,42 @@ _Startup:
 
             CLI    ;ENABLE INTERUPTS
             
-            MOVB $01,PATHINGMODE ;BY DEFAULT IT IS ONE (WILL TAKE RIGHT MOST PATH ALWAYS)
+            JSR   initPORTS                 ;                                           
+                                                
+            JSR   initAD                    ;                  
+                                                                                         
+            JSR   initLCD                   ;                     
+            JSR   clrLCD                    ;                   
+                                                                                           
+            JSR   initTCNT                  ;   
+                                                                                          
+            CLI                             ; 
+                                                                                          
+            LDX   #msg1                     ; 
+            JSR   putsLCD                   ;                                         
+                                                                                           
+            LDAA  #$8A                      ;
+            JSR   cmd2LCD                   ; 
+            LDX   #msg2                     ;
+            JSR   putsLCD                   ;
+                                                                        
+            LDAA  #$C0                      ; 
+            JSR   cmd2LCD                   ;
+            LDX   #msg3                     ; 
+            JSR   putsLCD                   ; 
+                                            
+            LDAA  #$C7                      ;
+            JSR   cmd2LCD                   ; 
+            LDX   #msg4                     ; 
+            JSR   putsLCD                   ;      
+                                                
+
+            MOVB #$01,PATHINGMODE ;BY DEFAULT IT IS ONE (WILL TAKE RIGHT MOST PATH ALWAYS)
 
 
-STANDBY      BRCLR PORTAD0,$04,INITIATE_START ;WHILE IN SBY LOOP MAIN UNLESS FWD BUMP IS PRESSED            
+STANDBY     BRCLR PORTAD0,#$04,INITIATE_START ;WHILE IN SBY LOOP MAIN UNLESS FWD BUMP HAS A VALUE OF 0, BRANCH             
             BRA STANDBY           ;KEEP CHECKING UNTIL ITS PUSHED
+
 INITIATE_START LDAA #START 
             STAA STATE_CURRENT   ;SET STATE TO START 
 
@@ -53,10 +84,6 @@ MAIN        JSR READING                 ;read sensor and update reading
             JSR DISPATCHER
             BRA MAIN 
 
-
-                        
-            
-            
 ;**************************************************************
 ;*                 State Subroutine                 *
 ;**************************************************************
@@ -67,44 +94,7 @@ MAIN        JSR READING                 ;read sensor and update reading
 ; DISP ---> SEARCH FOR CURRENT STATE REPEATEDLY 
 ;
 ; 
-;
-;
-;
 
-
-;OLD CODE 
-
-    DISPATCHER   CMPA #START    ; IF START STATE CALL START ROUTINE
-                BNE STANDBY
-                JSR STATE_START   
-                BRA DISP_EXIT ; EXIT (RTS)
-                
-    STANDBY    CMPA #FORWARD  ;ELSE IF FORWARD
-                BNE NOT_FORWARD
-                JSR STATE_FORWARD
-                JMP DISP_EXIT
-                
-    NOT_FORWARD  CMPA #REVERSE  ;ELSE IF REVERSE 
-                BNE NOT_REVERSE
-                JSR STATE_REVERSE
-                JMP DISP_EXIT
-                
-    NOT_REVERSE  CMPA #TURN_RIGHT ;ELSE IF TURN RIGHT
-                BNE NOT_ALL_STOP
-                JSR STATE_RIGHT_TURN
-                JMP DISP_EXIT 
-                
-    NOT_RIGHT   CMPA #TURN_LEFT ;ELSE IF TURN LEFT
-                BNE NOT_LEFT
-                JSR STATE_LEFT_TURN
-                JMP DISP_EXIT
-
-    NOT_LEFT    CMPA #ALLSTOP    
-                BNE NOT_ALLSTOP
-                JSR STATE_ALLSTOP  
-                JMP DISP_EXIT     
-
- ;;OLD CODE 
 DISPATCHER   CMPA #START    ; IF START STATE CALL START ROUTINE
              BNE NOT_START
              JSR STATE_START   
@@ -121,7 +111,9 @@ NOT_FOLLOW  CMPA #IS_INTERSECT  ;ELSE IF AT INTERSECT
             JMP DISP_EXIT       ;BACK TO MAIN 
 
 NO_INTERSECT CMPA #BUMP         ;ELSE IF BUMP 
-            BNE NONE_OF_ABOVE  ;IF NONE OF THE ABOVE SWI SOMETHING IS WRONG              
+            BNE NONE_OF_ABOVE  ;IF NONE OF THE ABOVE SWI SOMETHING IS WRONG   
+            JSR BACKTRACK   ;IF BUMP BACKTRACK 
+            JMP DISP_EXIT           
             ;;;
             
 NONE_OF_ABOVE SWI
@@ -138,7 +130,10 @@ STATE_START     JSR del_50us   ;DELAY TO AVOID DOUBLE REGISTERING INPUT FROM BUM
 ;
 ;;CHECK FOR ADJUSTMENTS (IS IT ON COURSE?)
  ;;;CHECK FOR INTERSECTION(IF SO SET STATE TO IS INTERSECT)
-STATE_FOLLOW   LDAA DETECTION_F   ;CHECK F AND E FOR ALIGNMENT
+STATE_FOLLOW   BRCLR PORTAD0,#$04,RECOGNIZE_BUMP 
+
+
+               LDAA DETECTION_F   ;CHECK F AND E FOR ALIGNMENT
                BEQ SHIFT_R   ;IF F IS  ZERO THEN IT NEED A SHIFT AND SHOULD TURN/LEAVE RIGHT MOTOR OFF
                JSR STARON     ; OTHERWISE THEY CAN STAY ON 
                LDAA DETECTION_E   ;IF E IS ZERO THEN IT NEEDS TO SHIFT LEFT AND SHOULD
@@ -155,16 +150,16 @@ STATE_FOLLOW   LDAA DETECTION_F   ;CHECK F AND E FOR ALIGNMENT
                LDAA DETECTION_A
                BNEQ NOT_2  ;IF THERE IS A PATH FORWARD ITS NOT TYPE 2
                LDAA DETECTION_B ;NO PATH FORWARDCHECK FOR L & R 
-               BEQ NOT_INTXN   ;NO PATH LEFT SO NOT AN INTERSECTION (MAYBE A RIGHT TURN?)
+               BEQ NOT_INTXN   ; IF NO PATH LEFT NOT AN INTERSECTION (MAYBE A RIGHT TURN?) SO BRANCH 
                LDAA DETECTION_D 
-               BEQ NOT_INTXN ;NO PATH RIGHT MAYBE A TURN LEFT?
+               BEQ NOT_INTXN ;NO PATH RIGHT OR LEFT OR FORWARD YOU PROBABLY FINISHED, SO GO DOUBLE CHECK 
                ;IS INTXN TYPE2 (PUSH VALUE $2X WHERE X IS PATHING MODE )
                LDAA PATHINGMODE     ;CHECK PATH MODE 
-               BNEQ ALT1
+               BEQ ALT1
                LDAA #$21         ;STORE INTXN TYPE AND DIRECTION TAKEN
                PSHA   
                BRA HANDLE_INTXN  ;SET STATE AND RETURN
-
+                             
             
 ALT1           LDAA #$20         ;STORE INTXN TYPE AND DIRECTION TAKEN
                PSHA 
@@ -182,7 +177,7 @@ NOT_2         LDAA DETECTION_B ;THERE IS A PATH FORWARD SO CHECK LEFT
                BEQ NOT_1   ;IF NO PATH LEFT ITS NOT PATH TYPE 1 
                ;IF WE GET HERE THERE IS A PATH FORWARD AND TO THE LEFT SO IT IS TYPE 1 ($1X )
                LDAA PATHINGMODE
-               BNEQ ALT2 
+               BEQ ALT2 
                LDAA #$11
                PSHA
                 HANDLE_INTXN
@@ -196,8 +191,6 @@ NOT_1          LDAA DETECTION_D ;THERE IS A PATH FORWARD IF WE GET HERE
                 BEQ NOT_INTXN ;IF NO PATH RIGHT THEN ITS NOT AN INTXN JUST A PATH FORWARD      
 
 
-                RTS ;;NO INTXN WITH STATE STILL FOLLOW, RETURN TO DISPATCH (WHICH WILL RETURN TO MAIN)
-
 SHIFT_R         STAROFF
                 JMP STATE_FOLLOW ; LOOP UNTIL CORRECTION COMPLETE
 
@@ -208,33 +201,169 @@ NOT_INTXN       LDAA DETECTION_A   ;WE GET HERE IF ITS NOT AN INTXN SO JUST CHEC
                 BNEQ SAFE_EXIT     ;EXITS IF THERE IS A PATH FORWARD (NOT DONE)
                 LDAA DETECTION_B
                 BNEQ SAFE_EXIT
-                LDAA DETECTION_D   
-                
-                
+                LDAA DETECTION_D        
+
+
+
+RECOGNIZE_BUMP MOVB #BUMP,STATE_CURRENT
+                RTS  ;RETURN TO DISP THEN MAIN
+
 SAFE_EXIT       RTS  ;RETURNS WITHOUT CHANGING STATE                
 HANDLE_INTXN   MOVB #IS_INTERSECT,STATE_CURRENT
                RTS ;WILL RETURN TO DISPATCH (WILL RETURN TO MAIN )
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-STATE_INTERSECT         LDAA DETECTION_B;
-                        BEQ  ;
-                        BNE 
+STATE_INTERSECT         PORTOFF
+                        STAROFF ;STOP TAKE A MOMENT TO CALCULATE NEXT MOVE
+                        PULA ;PULL INTERSECTION IN STACK FOR OBSERVATION 
+                        PSHA ;REPLACE IT INTO STACK TO PRESERVE INFORMATION
+                        ANDA #%11110000 
+                        CMPA #$00
+                        BNEQ NOT_INT_0   ;CHECK IF TYPE 0
+                        LDAA PATHINGMODE
+                        BNEQ PIVOT_C      ; IF REGULAR PATHING TURN RIGHT OTHERWISE CONTINUE STRAIGHT
+                        BRA EXIT_STATE 
                         
+NOT_INT_0               CMPA #$10          ;ELSE IF TYPE 1
+                        BNEQ NOT_INT_1 
+                        LDAA PATHINGMODE
+                        BEQ PIVOT_CC     ;IF REGULAR PATHING GO STRAIGHT
+                        BRA EXIT_STATE   ;ELSE GO LEFT
+                                            
+                                    
+NOT_INT_1               CMPA #$20           ;ELSE ITS TYPE 2 (CMPA JUST FOR READABILITY)
+                        LDAA PATHINGMODE
+                        BEQ PIVOT_CC
+                        BRA PIVOT_C
+                        
+                        
+                 
+PIVOT_C                 JSR PORTFWD             
+                        JSR STARREV
+                        JSR PORTON
+                        JSR STARON
+PIVOTLOOP               LDAA DETECTION_A
+                        BNEQ PIVOTLOOP             
+FINDLINE                LDAA DETECTION_A
+                        BEQ FINDLINE
+                        JSR PORTOFF
+                        JSR STAROFF
+                        RTS
 
+PIVOT_CC                 JSR PORTREV
+                        JSR STARFWD
+                        JSR PORTON
+                        JSR STARON
+PIVOTLOOP1               LDAA DETECTION_A
+                        BNEQ PIVOTLOOP1             
+FINDLINE1               LDAA DETECTION_A
+                        BEQ FINDLINE1
+                        JSR PORTOFF
+                        JSR STAROFF
+                        RTS
+                        
+EXIT_STATE              STARON
+                        PORTON
+                        JSR del_50us    ; WAIT FOR BOT TO LEAVE INTERSECTION BEFORE CHECKING FOR ONE AGAIN 
+                        MOVB #FOLLOW,STATE_CURRENT ; IT IS READY TO CONTINUE FOLLOWING THE LINE FORWARD
+                        RTS
 
+  
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-STATE_BACKTRACK         PULA; PULLS LST DIRECTION AND INTERSECTION
-                        ANDA #$11110000
-                        CMPA $20
-                        BEQ INTERSECTION_2 ;CHECK IF PREV INTERSECTION WAS A TYPE 2
-                        CMPA $10
-                        BEQ INTERSECTION_1 ; CHECK IF PREV INTERSECTION WAS A TYPE 1
-                        CMPA $00
-                        BEQ INTERSECTION_0;CHECK IF PREV INTERSECTION WAS A TYPE 0
- IS DETECTEDON_2          LDAA DETECTION   
+STATE_BACKTRACK         PORTOFF
+                        STAROFF
+                        PORTREV
+                        STARREV
+INIT_FIRST_INTERVAL    JSR PORTON      ;BEGIN REVERSING 
+                        JSR STARON
+                        del_50us
+checkloop0              LDAA DETECTION_B ;REVERSE UNTIL FIRST INTERSECTION IS DETECTED
+                        BNEQ checkint
+                        LDAA DETECTION_D
+                        BNEQ checkint
+                        BRA checkloop0
 
+checkint                PULA; PULLS LST DIRECTION AND INTERSECTION
+                        PSHA
+                        CMPA #$01
+                        BEQ INTERSECTION_01 ;BRANCH IF PREV INTERSECTION WAS A TYPE 01
+                        CMPA #$00
+                        BEQ INTERSECTION_00 ; BRANCH IF PREV INTERSECTION WAS A TYPE 10
+                        CMPA #$11
+                        BEQ INTERSECTION_11;BRANCH IF PREV INTERSECTION WAS A TYPE 11
+                        CMPA #$10
+                        BEQ INTERSECTION_10;BRANCH IF PREV INTERSECTION WAS A TYPE 10
+                        CMPA #$21
+                        BEQ INTERSECTION_21;BRANCH IF PREV INTERSECTION WAS A TYPE 21
+                        CMPA #$20
+                        BEQ INTERSECTION_20;BRANCH IF PREV INTERSECTION WAS A TYPE 20
+                        
+INTERSECTION_01         JSR PIVOT_CC ;PIVOT COUNTER CLOCKWISE 
+                        JSR PORTREV
+                        JSR STARREV
+                        JSR PORTON
+                        JSR STARON
+                        BNEQ CHANGEPATH0    ; CHANGE PATHINGMODE TO 0
+                                          
 
+INTERSECTION_00         JSR PIVOT_CC        ;PIVOT CLOCKWISE
+                        JSR PORTREV
+                        JSR STARREV
+                        JSR PORTON
+                        JSR STARON
+                        BNEQ CHANGEPATH1    ;CHANGE PATHINGMODE TO 1
 
-SECOND_INTXN_DETECTED MOVB #FOLLOW,STATE_CURRENT
+INTERSECTION_11         JSR PIVOT_C             ;PIVOT CLOCKWISE
+                        JSR PORTREV
+                        JSR STARREV
+                        JSR PORTON
+                        JSR STARON
+                        BNEQ CHANGEPATH0    ; CHANGE PATHINGMODE TO 0
+
+INTERSECTION_10         JSR PIVOT_CC            ;PIVOT COUNTER CLOCKWISE
+                        JSR PORTREV
+                        JSR STARREV
+                        JSR PORTON
+                        JSR STARON
+                        BNEQ CHANGEPATH1    ;CHANGE PATHINGMODE TO 1
+
+INTERSECTION_21         JSR PIVOT_CC            ;PIVOT COUNTER CLOCKWISE
+                        JSR PORTREV
+                        JSR STARREV
+                        JSR PORTON
+                        JSR STARON
+                        BNEQ CHANGEPATH0
+
+INTERSECTION_20         JSR PIVOT_C             ;PIVOT CLOCKWISE
+                        JSR PORTREV
+                        JSR STARREV
+                        JSR PORTON
+                        JSR STARON
+                        BNEQ CHANGEPATH1    ;CHANGE PATHINGMODE TO 1
+
+CHANGEPATH0              MOVB #$01,PATHINGMODE  ;CHANGE PATHINGMODE TO 1
+                         JMP INIT_SECOND_INTERVAL
+
+CHANGEPATH1              MOVB #$00,PATHINGMODE  ;CHANGE PATHINGMODE TO 01
+                         JMP INIT_SECOND_INTERVAL
+
+INIT_SECOND_INTERVAL    JSR PORTON      ;BEGIN REVERSING 
+                        JSR STARON
+                        del_50us
+checkloop               LDAA DETECTION_B ;REVERSE UNTIL SECOND INTERSECTION IS DETECTED
+                        BNEQ EXIT_LOOP
+                        LDAA DETECTION_D
+                        BNEQ EXIT_LOOP
+                        BRA checkloop
+
+EXIT_LOOP               JSR PORTOFF ;TURN OFF ALL MOTORS 
+                        JSR STAROFF
+                        SECOND_INTXN_DETECTED
+
+SECOND_INTXN_DETECTED   JSR PORTOFF ;TURN OFF ALL MOTORS AND RETURN TO DISPATH(MAIN PART OF CODE)
+                        JSR STAROFF
+                        JSR STARFWD
+                        JSR PORTFWD
+                        MOVB #FOLLOW,STATE_CURRENT
                         RTS ; RETURN TO DISPATCH (WCHICH WILL RETURN TO MAIN )
 ;**************************************************************
 ;*                 MOTOR CONTROL        PORT = LEFT ;;;; STAR = RIGHT                       *
@@ -312,37 +441,30 @@ SUBMAN                  JSR G_LEDS_ON ; Enable the guider LEDs
                         STAA DETECTION_E        ;Setting Sensor E
                         STAA DETECTION_F        ;Setting Sensor F
 
-DETECTION_A             LDAA SENSOR_BOW         ;       
-                        JNB SENSOR_BOW, DETECTION_B ;
-                        INC DETECTION_A         ;
+DETECTION_A             LDAA SENSOR_BOW         ;      LOAD SENSOR A
+                        JNB SENSOR_BOW, DETECTION_B ;  IF SENSOR A HAS A VALUE OF 0, BRANCH 
+                        INC DETECTION_A         ;      INCREMENT DECTECTION_A BY 1 IF SENSOR IS DETECTED
                         
-DETECTION_B             LDAA SENSOR_PORT         ;       
-                        JNB SENSOR_PORT, DETECTION_C ;
-                        INC DETECTION_B         ;
+DETECTION_B             LDAA SENSOR_PORT         ;       LOAD SENSOR B
+                        JNB SENSOR_PORT, DETECTION_C ;  IF SENSOR B HAS A VALUE OF 0, BRANCH 
+                        INC DETECTION_B         ;   INCREMENT DETECTION_B BY 1 IF SENSOR IS DETECTED
 
-DETECTION_C             LDAA SENSOR_MID         ;       
-                        JNB SENSOR_MID, DETECTION_D ;
-                        INC DETECTION_C         ;
+DETECTION_C             LDAA SENSOR_MID         ;       LOAD SENSOR C
+                        JNB SENSOR_MID, DETECTION_D ;   IF SENSOR C HAS A VALUE OF 0, BRANCH 
+                        INC DETECTION_C         ;   INCREMENT DETECTION_C BY 1 IF SENSOR IS DETECTED
 
-DETECTION_D             LDAA SENSOR_STBD         ;       
-                        JNB SENSOR_STBD, DETECTION_E ;
-                        INC DETECTION_D         ;
+DETECTION_D             LDAA SENSOR_STBD         ;       LOAD SENSOR D
+                        JNB SENSOR_STBD, DETECTION_E ;     IF SENSOR D HAS A VALUE OF 0, BRANCH 
+                        INC DETECTION_D         ;   INCREMENT DETECTION_D BY 1 IF SENSOR IS DETECTED
 
-DETECTION_E             LDAA SENSOR_LINE         ;       
-                        JNB SENSOR_BOW, DETECTION_F ;
-                        INC DETECTION_E         ;
+DETECTION_E             LDAA SENSOR_LINE         ;       LOAD SENSOR E
+                        JNB SENSOR_BOW, DETECTION_F ;    IF SENSOR E HAS A VALUE OF 0, BRANCH 
+                        INC DETECTION_E         ;   INCREMENT DETECTION_E BY 1 IF SENSOR IS DETECTED
 
-DETECTION_F             LDAA SENSOR_LINE         ;       
-                        JNB SENSOR_LINE, FINISH  ;
-                        INC DETECTION_F         ;
+DETECTION_F             INC DETECTION_F         ;   INCREMENT DETECTION_F BY 1 IF SENSOR IS DETECTED
 
 FINISH                  RTS
-                        
-
-
-
-                        
-
+                    
 ;---------------------------------------------------------------------------
 ; Guider LEDs ON
 ; This routine enables the guider LEDs so that readings of the sensor
@@ -544,7 +666,6 @@ dataMov                 BSET LCD_CNTR,LCD_E ; pull the LCD E-sigal high
                         LDY #1 ; adding this delay will complete the internal
                         JSR del_50us ; operation for most instructions
                         RTS
-
 ;*******************************************************************
 initAD      MOVB #$C0,ATDCTL2 ;power up AD, select fast flag clear
             JSR  del_50us ;wait for 50 us
@@ -552,7 +673,6 @@ initAD      MOVB #$C0,ATDCTL2 ;power up AD, select fast flag clear
             MOVB #$85,ATDCTL4 ;res=8, conv-clks=2, prescal=12
             BSET ATDDIEN,$0C ;configure pins AN03,AN02 as digital inputs
             RTS
-
 ;*******************************************************************
 int2BCD     XGDX ;Save the binary number into .X
             LDAA #0 ;Clear the BCD_BUFFER
@@ -601,7 +721,6 @@ int2BCD     XGDX ;Save the binary number into .X
             STAB TEN_THOUS
 ;*
 CON_EXIT    RTS ;We’re done the conversion
-
 ;*******************************************************************
 BCD2ASC     LDAA #0 ;Initialize the blanking flag
             STAA NO_BLANK
@@ -638,13 +757,9 @@ LCD_POS_CRSR            ORAA #%10000000 ; Set the high bit of the control word
                         JSR cmd2LCD ; and set the cursor address
                         RTS
 
-
-
 ;**************************************************************
 ;*                 Interrupt Vectors                       *
 ;**************************************************************
-
-
 
             ORG   $FFFE
             DC.W  Entry           ; Reset Vector
