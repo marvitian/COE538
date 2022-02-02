@@ -1,9 +1,5 @@
 
-Skip to content
-Pulls
-Issues
-Marketplace
-Explore
+
 @marvitian
 
 COE538
